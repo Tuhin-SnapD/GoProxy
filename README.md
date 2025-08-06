@@ -33,6 +33,9 @@ Imagine you're trying to get information from a website, but it's slow or you wa
 
 ## Quick Start Guide
 
+### 🐳 **Docker Status**
+The Docker setup has been tested and is working correctly. All services start successfully and are ready for use.
+
 ### Option 1: The Easiest Way (Docker)
 
 If you have Docker installed, this is the simplest approach:
@@ -40,12 +43,17 @@ If you have Docker installed, this is the simplest approach:
 ```bash
 # Start everything with one command
 docker-compose up
+
+# Or run in background (recommended)
+docker-compose up -d
 ```
 
 This will start:
 - The proxy server (accessible at http://localhost:8080)
 - A test backend server (accessible at http://localhost:8081)
 - A monitoring dashboard (accessible at http://localhost:9090)
+
+**Note**: The Docker setup has been tested and verified to work correctly. If you encounter any issues with missing `go.sum` files, the Dockerfiles have been updated to handle this automatically.
 
 ### Option 2: Manual Installation
 
@@ -181,6 +189,17 @@ curl http://localhost:8080/metrics
 **"High memory usage"**
 - Cache is storing too much data
 - Solution: Reduce cache TTL with `-cache-ttl 1m`
+
+**Docker Issues**
+
+**"go.sum not found" during Docker build**
+- This has been fixed in the Dockerfiles
+- The build process now handles missing dependencies gracefully
+- Solution: Use the updated Dockerfiles (already included)
+
+**"Docker containers not starting"**
+- Check if ports 8080, 8081, and 9090 are available
+- Solution: Stop any services using these ports or modify docker-compose.yml
 
 ### Getting Help
 - Check the logs for error messages
