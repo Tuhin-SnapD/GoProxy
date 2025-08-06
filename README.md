@@ -58,7 +58,7 @@ First, you need to install Go on your computer:
 #### Step 2: Build the Project
 ```bash
 # Download the project
-git clone <repository-url>
+git clone https://github.com/Tuhin-SnapD/GoProxy
 cd goproxy
 
 # Install dependencies and build
