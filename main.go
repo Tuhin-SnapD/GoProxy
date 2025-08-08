@@ -1,18 +1,20 @@
 package main
 
 import (
-	"flag"
-	"log"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
+    "embed"
+    "flag"
+    "io/fs"
+    "log"
+    "net/http"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
 
-	"goproxy/cache"
-	"goproxy/metrics"
-	"goproxy/proxy"
-	"goproxy/ratelimit"
+    "goproxy/cache"
+    "goproxy/metrics"
+    "goproxy/proxy"
+    "goproxy/ratelimit"
 )
 
 type Config struct {
@@ -22,6 +24,9 @@ type Config struct {
 	CacheTTL        time.Duration
 }
 
+//go:embed ui/*
+var embeddedUI embed.FS
+
 func main() {
 	config := parseFlags()
 	
@@ -30,17 +35,35 @@ func main() {
 	rateLimiter := ratelimit.New(config.RateLimitPerMin)
 	metricsCollector := metrics.New()
 	
-	// Create reverse proxy
-	reverseProxy := proxy.New(config.BackendURL, cacheManager, rateLimiter, metricsCollector)
+    // Create reverse proxy
+    reverseProxy := proxy.New(config.BackendURL, cacheManager, rateLimiter, metricsCollector)
 	
 	// Setup HTTP server
 	mux := http.NewServeMux()
 	
-	// Proxy routes
-	mux.HandleFunc("/", reverseProxy.HandleRequest)
+    // UI assets (served from embedded filesystem)
+    uiSub, err := fs.Sub(embeddedUI, "ui")
+    if err != nil {
+        log.Printf("warning: UI assets not available: %v", err)
+    }
+
+    // Favicon (avoid proxying this and spamming logs)
+    mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusNoContent)
+    })
+
+    // Routes
+    // Make UI the landing page at root
+    if err == nil {
+        mux.Handle("/", http.FileServer(http.FS(uiSub)))
+    }
+    // Expose reverse proxy under /proxy/ (strip the prefix when forwarding)
+    mux.Handle("/proxy/", http.StripPrefix("/proxy", http.HandlerFunc(reverseProxy.HandleRequest)))
 	
 	// Metrics endpoint
 	mux.HandleFunc("/metrics", metricsCollector.HandleMetrics)
+    mux.HandleFunc("/metrics.json", metricsCollector.HandleJSONMetrics)
+    mux.HandleFunc("/requests.json", metricsCollector.HandleRecentRequests)
 	
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +117,6 @@ func parseFlags() *Config {
 		Port:            *port,
 		BackendURL:      *backendURL,
 		RateLimitPerMin: *rateLimitPerMin,
-		CacheTTL:        *cacheTTL,
+        CacheTTL:        *cacheTTL,
 	}
 } 

@@ -8,7 +8,7 @@ build:
 	@echo "Building GoProxy..."
 	@go mod tidy
 	@go build -o goproxy main.go
-	@go build -o test_server test_server.go
+	@go build -tags testserver -o test_server test_server.go
 	@echo "Build complete!"
 
 # Build for Windows
@@ -16,7 +16,7 @@ build-windows:
 	@echo "Building GoProxy for Windows..."
 	@go mod tidy
 	@go build -o goproxy.exe main.go
-	@go build -o test_server.exe test_server.go
+	@go build -tags testserver -o test_server.exe test_server.go
 	@echo "Build complete!"
 
 # Clean build artifacts

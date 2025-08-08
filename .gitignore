@@ -1,3 +1,14 @@
+goproxy
+goproxy.exe
+test_server
+test_server.exe
+coverage.out
+dist/
+.DS_Store
+.idea/
+.vscode/
+node_modules/
+*.log
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -114,6 +125,8 @@ temp/
 # Build artifacts
 build/
 bin/
+goproxy
+test_server
 
 # Configuration files with sensitive data
 config.json

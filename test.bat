@@ -20,9 +20,9 @@ if %errorlevel% equ 0 (
     echo ✗ Metrics endpoint
 )
 
-REM Test proxy to backend
+REM Test proxy to backend (now under /proxy/)
 echo Testing proxy to backend...
-curl -s -f http://localhost:8080/ >nul 2>&1
+curl -s -f http://localhost:8080/proxy/ >nul 2>&1
 if %errorlevel% equ 0 (
     echo ✓ Proxy to backend
 ) else (
@@ -32,17 +32,17 @@ if %errorlevel% equ 0 (
 REM Test cache functionality
 echo Testing cache functionality...
 echo First request (should miss cache):
-curl -s http://localhost:8080/
+curl -s http://localhost:8080/proxy/
 echo.
 echo Second request (should hit cache):
-curl -s http://localhost:8080/
+curl -s http://localhost:8080/proxy/
 echo.
 
 REM Test rate limiting
 echo Testing rate limiting...
 echo Making 10 requests to test rate limiting...
 for /l %%i in (1,1,10) do (
-    for /f "tokens=*" %%a in ('curl -s -w "%%{http_code}" http://localhost:8080/ -o nul 2^>^&1') do (
+    for /f "tokens=*" %%a in ('curl -s -w "%%{http_code}" http://localhost:8080/proxy/ -o nul 2^>^&1') do (
         if "%%a"=="429" (
             echo Rate limit hit after %%i requests
             goto :show_metrics

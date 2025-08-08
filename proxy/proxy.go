@@ -1,21 +1,23 @@
 package proxy
 
 import (
-	"bytes"
-	"log"
-	"net/http"
-	"net/http/httputil"
-	"net/url"
-	"strings"
-	"time"
+    "bytes"
+    "log"
+    "net"
+    "net/http"
+    "net/http/httputil"
+    "net/url"
+    "strings"
+    "time"
 
-	"goproxy/cache"
-	"goproxy/metrics"
-	"goproxy/ratelimit"
+    "goproxy/cache"
+    "goproxy/metrics"
+    "goproxy/ratelimit"
 )
 
 type ReverseProxy struct {
 	backendURL      string
+    backendParsed   *url.URL
 	cacheManager    *cache.Manager
 	rateLimiter     *ratelimit.Manager
 	metricsCollector *metrics.Collector
@@ -28,12 +30,13 @@ func New(backendURL string, cacheManager *cache.Manager, rateLimiter *ratelimit.
 		log.Fatalf("Invalid backend URL: %v", err)
 	}
 
-	proxy := &ReverseProxy{
-		backendURL:       backendURL,
-		cacheManager:     cacheManager,
-		rateLimiter:      rateLimiter,
-		metricsCollector: metricsCollector,
-	}
+    proxy := &ReverseProxy{
+        backendURL:       backendURL,
+        backendParsed:    backend,
+        cacheManager:     cacheManager,
+        rateLimiter:      rateLimiter,
+        metricsCollector: metricsCollector,
+    }
 
 	// Create reverse proxy
 	proxy.proxy = &httputil.ReverseProxy{
@@ -41,11 +44,29 @@ func New(backendURL string, cacheManager *cache.Manager, rateLimiter *ratelimit.
 			req.URL.Scheme = backend.Scheme
 			req.URL.Host = backend.Host
 			req.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
+            if req.TLS != nil {
+                req.Header.Set("X-Forwarded-Proto", "https")
+            } else {
+                req.Header.Set("X-Forwarded-Proto", "http")
+            }
 			req.Host = backend.Host
 		},
 		ModifyResponse: proxy.modifyResponse,
 		ErrorHandler:   proxy.errorHandler,
 	}
+
+    // Tune transport for better performance
+    transport := &http.Transport{
+        Proxy:                 http.ProxyFromEnvironment,
+        ForceAttemptHTTP2:     true,
+        MaxIdleConns:          512,
+        MaxIdleConnsPerHost:   256,
+        IdleConnTimeout:       120 * time.Second,
+        TLSHandshakeTimeout:   10 * time.Second,
+        ExpectContinueTimeout: 1 * time.Second,
+    }
+    proxy.proxy.Transport = transport
+    proxy.proxy.FlushInterval = 100 * time.Millisecond
 
 	return proxy
 }
@@ -63,6 +84,22 @@ func (rp *ReverseProxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	if !rp.rateLimiter.Allow(clientIP) {
 		rp.metricsCollector.IncrementBlockedRequests()
 		http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+    rp.metricsCollector.AddRequestLog(metrics.RequestLogEntry{
+            Timestamp:  time.Now(),
+            Method:     r.Method,
+            Path:       r.URL.String(),
+            Status:     http.StatusTooManyRequests,
+            ClientIP:   clientIP,
+            DurationMs: float64(time.Since(start).Microseconds()) / 1000.0,
+            CacheHit:   false,
+            Bytes:      0,
+        Host:       rp.backendParsed.Host,
+        Scheme:     rp.backendParsed.Scheme,
+        UserAgent:  r.UserAgent(),
+        Referer:    r.Referer(),
+        ContentType: "",
+        CacheTTLRemainingMs: 0,
+        })
 		return
 	}
 	
@@ -72,19 +109,41 @@ func (rp *ReverseProxy) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	// Handle other methods directly
-	rp.proxy.ServeHTTP(w, r)
-	
-	// Record response time
-	rp.metricsCollector.RecordResponseTime(time.Since(start))
+    // Handle other methods directly with capture for logging
+    capture := &responseCapture{
+        ResponseWriter: w,
+        statusCode:     http.StatusOK,
+        headers:        make(http.Header),
+        body:           &bytes.Buffer{},
+    }
+    rp.proxy.ServeHTTP(capture, r)
+    duration := time.Since(start)
+    rp.metricsCollector.RecordResponseTime(duration)
+    rp.metricsCollector.AddRequestLog(metrics.RequestLogEntry{
+        Timestamp:  time.Now(),
+        Method:     r.Method,
+        Path:       r.URL.String(),
+        Status:     capture.statusCode,
+        ClientIP:   clientIP,
+        DurationMs: float64(duration.Microseconds()) / 1000.0,
+        CacheHit:   false,
+        Bytes:      capture.body.Len(),
+        Host:       rp.backendParsed.Host,
+        Scheme:     rp.backendParsed.Scheme,
+        UserAgent:  r.UserAgent(),
+        Referer:    r.Referer(),
+        ContentType: capture.headers.Get("Content-Type"),
+        CacheTTLRemainingMs: 0,
+    })
 }
 
 func (rp *ReverseProxy) handleGetRequest(w http.ResponseWriter, r *http.Request, clientIP string) {
+    start := time.Now()
 	// Create cache key
 	cacheKey := r.URL.String()
 	
 	// Try to get from cache
-	if cachedResponse := rp.cacheManager.Get(cacheKey); cachedResponse != nil {
+    if cachedResponse := rp.cacheManager.Get(cacheKey); cachedResponse != nil {
 		rp.metricsCollector.IncrementCacheHits()
 		
 		// Copy cached response to client
@@ -94,7 +153,28 @@ func (rp *ReverseProxy) handleGetRequest(w http.ResponseWriter, r *http.Request,
 			}
 		}
 		w.WriteHeader(cachedResponse.StatusCode)
-		w.Write(cachedResponse.Body)
+        _, _ = w.Write(cachedResponse.Body)
+        duration := time.Since(start)
+        rp.metricsCollector.RecordResponseTime(duration)
+        // compute remaining TTL
+        remaining := time.Until(cachedResponse.ExpiresAt)
+        if remaining < 0 { remaining = 0 }
+        rp.metricsCollector.AddRequestLog(metrics.RequestLogEntry{
+            Timestamp:  time.Now(),
+            Method:     r.Method,
+            Path:       r.URL.String(),
+            Status:     cachedResponse.StatusCode,
+            ClientIP:   clientIP,
+            DurationMs: float64(duration.Microseconds()) / 1000.0,
+            CacheHit:   true,
+            Bytes:      len(cachedResponse.Body),
+            Host:       rp.backendParsed.Host,
+            Scheme:     rp.backendParsed.Scheme,
+            UserAgent:  r.UserAgent(),
+            Referer:    r.Referer(),
+            ContentType: http.Header(cachedResponse.Headers).Get("Content-Type"),
+            CacheTTLRemainingMs: float64(remaining.Microseconds()) / 1000.0,
+        })
 		return
 	}
 	
@@ -105,7 +185,7 @@ func (rp *ReverseProxy) handleGetRequest(w http.ResponseWriter, r *http.Request,
 		ResponseWriter: w,
 		statusCode:     http.StatusOK,
 		headers:        make(http.Header),
-		body:          &bytes.Buffer{},
+        body:           &bytes.Buffer{},
 	}
 	
 	// Forward request to backend
@@ -120,6 +200,25 @@ func (rp *ReverseProxy) handleGetRequest(w http.ResponseWriter, r *http.Request,
 		}
 		rp.cacheManager.Set(cacheKey, cachedResponse)
 	}
+
+    duration := time.Since(start)
+    rp.metricsCollector.RecordResponseTime(duration)
+    rp.metricsCollector.AddRequestLog(metrics.RequestLogEntry{
+        Timestamp:  time.Now(),
+        Method:     r.Method,
+        Path:       r.URL.String(),
+        Status:     responseWriter.statusCode,
+        ClientIP:   clientIP,
+        DurationMs: float64(duration.Microseconds()) / 1000.0,
+        CacheHit:   false,
+        Bytes:      responseWriter.body.Len(),
+        Host:       rp.backendParsed.Host,
+        Scheme:     rp.backendParsed.Scheme,
+        UserAgent:  r.UserAgent(),
+        Referer:    r.Referer(),
+        ContentType: responseWriter.headers.Get("Content-Type"),
+        CacheTTLRemainingMs: 0,
+    })
 }
 
 func (rp *ReverseProxy) modifyResponse(resp *http.Response) error {
@@ -148,8 +247,12 @@ func getClientIP(r *http.Request) string {
 		return realIP
 	}
 	
-	// Use remote address
-	return r.RemoteAddr
+    // Use remote address (strip port if present)
+    host, _, err := net.SplitHostPort(r.RemoteAddr)
+    if err == nil && host != "" {
+        return host
+    }
+    return r.RemoteAddr
 }
 
 // responseCapture captures the response for caching
@@ -158,18 +261,42 @@ type responseCapture struct {
 	statusCode int
 	headers    http.Header
 	body       *bytes.Buffer
+    captured   bool
 }
 
 func (rc *responseCapture) WriteHeader(statusCode int) {
-	rc.statusCode = statusCode
-	rc.ResponseWriter.WriteHeader(statusCode)
+    rc.statusCode = statusCode
+    rc.captureHeaders()
+    rc.ResponseWriter.WriteHeader(statusCode)
 }
 
 func (rc *responseCapture) Write(data []byte) (int, error) {
-	rc.body.Write(data)
-	return rc.ResponseWriter.Write(data)
+    if !rc.captured {
+        if rc.statusCode == 0 {
+            rc.statusCode = http.StatusOK
+        }
+        rc.captureHeaders()
+    }
+    rc.body.Write(data)
+    return rc.ResponseWriter.Write(data)
 }
 
 func (rc *responseCapture) Header() http.Header {
-	return rc.headers
-} 
+    // delegate to underlying so headers are actually sent to client
+    return rc.ResponseWriter.Header()
+}
+
+// captureHeaders copies headers from the underlying header map once
+func (rc *responseCapture) captureHeaders() {
+    if rc.captured {
+        return
+    }
+    if rc.headers != nil {
+        for k, v := range rc.ResponseWriter.Header() {
+            vv := make([]string, len(v))
+            copy(vv, v)
+            rc.headers[k] = vv
+        }
+    }
+    rc.captured = true
+}

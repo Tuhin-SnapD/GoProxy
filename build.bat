@@ -20,7 +20,7 @@ go build -o goproxy.exe main.go
 
 REM Build the test server
 echo Building test server...
-go build -o test_server.exe test_server.go
+go build -tags testserver -o test_server.exe test_server.go
 
 echo Build complete!
 echo.

@@ -1,47 +1,67 @@
-# GoProxy - Simple and Fast Web Proxy Server
+# GoProxy – fast reverse proxy with caching, rate limiting and metrics
 
-**GoProxy** is a web server that acts as a middleman between your computer and other websites. Think of it like a smart assistant that helps make web requests faster and more secure.
+![Landing](./landing.png)
+
+GoProxy is a small reverse proxy written in Go. It caches GET responses, applies per‑IP rate limiting, and exposes Prometheus‑style metrics and a simple UI.
 
 ## What Does GoProxy Do?
+GoProxy sits between clients and your backend service, helping by:
 
-Imagine you're trying to get information from a website, but it's slow or you want to access it more efficiently. GoProxy sits between you and that website, helping by:
-
-- **Making things faster** - It remembers (caches) information you've already requested, so you don't have to wait for it again
-- **Protecting against overload** - It limits how many requests can be made at once to prevent the server from getting overwhelmed
-- **Keeping track of usage** - It provides statistics about how much traffic is going through
-- **Adding security** - It can help protect your backend services from direct access
+- Making things faster – caches repeat GET responses
+- Protecting against overload – rate limits requests per IP
+- Keeping track of usage – exposes Prometheus and JSON metrics
+- Adding safety – hides your backend behind a single entry point
 
 ## Key Features
 
-### 🚀 **Speed Boost**
-- **Smart Caching**: Remembers responses and serves them instantly on repeat requests
-- **High Performance**: Built with Go for fast, efficient operation
+### 🚀 Speed Boost
+- Smart caching: serves repeat GET responses instantly (configurable TTL)
+- High performance: built with Go
 
-### 🛡️ **Protection**
-- **Rate Limiting**: Prevents too many requests from overwhelming your server
-- **Request Filtering**: Can block or limit access based on rules you set
+### 🛡️ Protection
+- Rate limiting: per‑IP requests/minute
+- Request shaping: easy place to add future rules
 
-### 📊 **Monitoring**
-- **Real-time Metrics**: See exactly how much traffic you're handling
-- **Performance Stats**: Track response times, cache hits, and more
-- **Health Checks**: Easy way to verify everything is working
+### 📊 Monitoring
+- Prometheus metrics at `/metrics`
+- JSON metrics at `/metrics.json`
+- Health checks at `/health`
 
-### 🔧 **Easy to Use**
-- **Simple Setup**: Just run one command to get started
-- **Flexible Configuration**: Easy to customize for your needs
-- **Cross-Platform**: Works on Windows, Mac, and Linux
+### 🔧 Easy to Use
+- One‑click Windows scripts
+- Docker Compose
+- Cross‑platform Go builds
+
+## Requirements
+- Go 1.21+
+- Windows, macOS or Linux
+- Optional: Docker + Docker Compose
 
 ## Quick Start Guide
 
-### 🐳 **Docker Status**
-The Docker setup has been tested and is working correctly. All services start successfully and are ready for use.
+### 🪟 Windows (one‑click)
+Use the included scripts:
 
-### Option 1: The Easiest Way (Docker)
+```bat
+run.bat         # builds both binaries, starts backend on :8081 and proxy on :8080
+stop.bat        # stops both processes
+```
 
-If you have Docker installed, this is the simplest approach:
+Change proxy port:
+
+```bat
+run.bat 9090    # proxy starts on :9090
+```
+
+After startup:
+- Proxy: `http://localhost:8080` (or chosen port)
+- Health: `http://localhost:8080/health`
+- UI: `http://localhost:8080/` (landing)
+- Metrics: `http://localhost:8080/metrics`
+
+### Option 1: Docker
 
 ```bash
-# Start everything with one command
 docker-compose up
 
 # Or run in background (recommended)
@@ -49,63 +69,60 @@ docker-compose up -d
 ```
 
 This will start:
-- The proxy server (accessible at http://localhost:8080)
-- A test backend server (accessible at http://localhost:8081)
-- A monitoring dashboard (accessible at http://localhost:9090)
-
-**Note**: The Docker setup has been tested and verified to work correctly. If you encounter any issues with missing `go.sum` files, the Dockerfiles have been updated to handle this automatically.
+- Proxy server: `http://localhost:8080`
+- Test backend server: `http://localhost:8081`
+- (If configured) monitoring stack
 
 ### Option 2: Manual Installation
 
 #### Step 1: Install Go
-First, you need to install Go on your computer:
-- **Windows**: Download from https://golang.org/dl/ and run the installer
-- **Mac**: Use `brew install go` or download from the website
-- **Linux**: Use your package manager (e.g., `sudo apt install golang-go`)
+- Windows: download from `https://golang.org/dl/`
+- macOS: `brew install go` or download
+- Linux: use your package manager (e.g. `sudo apt install golang-go`)
 
-#### Step 2: Build the Project
+#### Step 2: Build the project
 ```bash
-# Download the project
-git clone https://github.com/Tuhin-SnapD/GoProxy
-cd goproxy
-
-# Install dependencies and build
 go mod tidy
-go build -o goproxy.exe main.go
-go build -o test_server.exe test_server.go
+go build -o goproxy main.go
+go build -tags testserver -o test_server test_server.go
 ```
 
-#### Step 3: Run the Servers
+#### Step 3: Run the servers
 ```bash
-# Start the test backend server (in one terminal)
-./test_server.exe
-
-# Start the proxy server (in another terminal)
-./goproxy.exe
+./test_server                                 # terminal 1 (listens on :8081)
+./goproxy -backend http://localhost:8081      # terminal 2 (serves on :8080)
 ```
 
 ## How to Use GoProxy
 
 ### Basic Usage
-Once running, GoProxy will be available at `http://localhost:8080`. Here's what you can do:
+Once running, GoProxy will be available at `http://localhost:8080`.
 
-1. **Access your backend**: Any request to `http://localhost:8080/` will be forwarded to your backend server
-2. **Check health**: Visit `http://localhost:8080/health` to see if everything is working
-3. **View metrics**: Visit `http://localhost:8080/metrics` to see performance statistics
+1. Access your backend: requests to `/proxy/` are forwarded to the backend
+2. Check health: `GET /health`
+3. View metrics: `GET /metrics` or `GET /metrics.json`
+4. Open UI dashboard: `GET /` (landing)
 
-### Customizing Settings
-You can customize how GoProxy behaves:
-
-```bash
-# Run with custom settings
-./goproxy.exe -port 9000 -backend http://my-website.com -rate-limit 200 -cache-ttl 10m
+### CLI Flags
+```text
+-port           string        proxy listen port (default "8080")
+-backend        string        backend base URL (default "http://localhost:8081")
+-rate-limit     int           requests per IP per minute (default 100)
+-cache-ttl      duration      TTL for cached GET responses (default 5m)
 ```
 
-**What these settings mean:**
-- `-port 9000`: Run on port 9000 instead of 8080
-- `-backend http://my-website.com`: Forward requests to your website
-- `-rate-limit 200`: Allow 200 requests per minute per user
-- `-cache-ttl 10m`: Keep cached responses for 10 minutes
+Example:
+
+```bash
+./goproxy -port 9000 -backend https://example.com -rate-limit 200 -cache-ttl 10m
+```
+
+### Endpoints
+- `/`                UI landing
+- `/health`          liveness check
+- `/metrics`         Prometheus text metrics
+- `/metrics.json`    JSON metrics
+- `/proxy/`          reverse-proxy to backend
 
 ## Understanding the Metrics
 
@@ -119,56 +136,50 @@ goproxy_blocked_requests 5       # Requests blocked due to rate limiting
 goproxy_cache_hit_rate 80.00     # Percentage of requests served from cache
 ```
 
-**What this tells you:**
-- **High cache hit rate** (like 80%+) means your proxy is working efficiently
-- **Low blocked requests** means your rate limits are reasonable
-- **Increasing total requests** shows your service is being used
+What this tells you:
+- High cache hit rate (e.g., 80%+) means the cache is effective
+- Low blocked requests means rate limits are reasonable
+- Increasing total requests shows usage trends
 
 ## Common Use Cases
 
-### 1. **Website Performance**
+### 1) Website Performance
 Use GoProxy in front of your website to:
 - Speed up page loads with caching
 - Reduce load on your main server
 - Protect against traffic spikes
 
-### 2. **API Protection**
+### 2) API Protection
 Place GoProxy in front of your API to:
 - Limit how many requests each user can make
 - Cache frequently requested data
 - Monitor API usage patterns
 
-### 3. **Development Testing**
+### 3) Development Testing
 Use GoProxy during development to:
 - Test how your app handles high traffic
-- Simulate real-world conditions
+- Simulate real‑world conditions
 - Debug performance issues
 
 ## Testing Your Setup
 
-### Quick Test
-Run the built-in test script to verify everything works:
+### Quick Test (Windows)
+Run the built‑in test script to verify everything works:
 
-```bash
-# Windows
-./test.bat
-
-# Linux/Mac
-./test.sh
+```bat
+test.bat
 ```
 
 ### Manual Testing
-You can also test manually:
-
 ```bash
 # Test health endpoint
 curl http://localhost:8080/health
 
 # Test proxy (should return backend response)
-curl http://localhost:8080/
+curl http://localhost:8080/proxy/
 
 # Test caching (second request should be faster)
-curl http://localhost:8080/
+curl http://localhost:8080/proxy/
 
 # Check metrics
 curl http://localhost:8080/metrics
@@ -178,78 +189,75 @@ curl http://localhost:8080/metrics
 
 ### Common Issues
 
-**"Port already in use"**
+"Port already in use"
 - Another program is using the same port
-- Solution: Use a different port with `-port 8081`
+- Solution: use a different port with `-port 9090` or run `stop.bat` first on Windows
 
-**"Backend not reachable"**
+"Backend not reachable"
 - Your backend server isn't running
-- Solution: Start your backend server first
+- Solution: start your backend server first (or use bundled `test_server`)
 
-**"High memory usage"**
+"High memory usage"
 - Cache is storing too much data
-- Solution: Reduce cache TTL with `-cache-ttl 1m`
+- Solution: reduce cache TTL with `-cache-ttl 1m`
 
-**Docker Issues**
+### Docker Issues
 
-**"go.sum not found" during Docker build**
-- This has been fixed in the Dockerfiles
-- The build process now handles missing dependencies gracefully
-- Solution: Use the updated Dockerfiles (already included)
+"go.sum not found" during Docker build
+- The Dockerfiles handle dependencies automatically
+- Use the updated Dockerfiles (already included)
 
-**"Docker containers not starting"**
-- Check if ports 8080, 8081, and 9090 are available
-- Solution: Stop any services using these ports or modify docker-compose.yml
+"Docker containers not starting"
+- Check if ports 8080 and 8081 are available
+- Stop any services using these ports or modify `docker-compose.yml`
 
 ### Getting Help
-- Check the logs for error messages
+- Check logs for error messages
 - Verify your backend server is running
-- Test with the built-in test scripts
+- Test with built‑in test scripts
 - Check the metrics endpoint for clues
 
 ## Configuration Examples
 
 ### For Development
 ```bash
-./goproxy.exe -port 8080 -backend http://localhost:3000 -rate-limit 1000 -cache-ttl 1m
+./goproxy -port 8080 -backend http://localhost:3000 -rate-limit 1000 -cache-ttl 1m
 ```
 - High rate limits for testing
 - Short cache time for fresh data
 
 ### For Production
 ```bash
-./goproxy.exe -port 80 -backend https://my-production-site.com -rate-limit 50 -cache-ttl 10m
+./goproxy -port 80 -backend https://my-production-site.com -rate-limit 50 -cache-ttl 10m
 ```
 - Lower rate limits for security
 - Longer cache time for performance
 
 ### For High Traffic
 ```bash
-./goproxy.exe -port 443 -backend https://my-busy-site.com -rate-limit 500 -cache-ttl 30m
+./goproxy -port 443 -backend https://my-busy-site.com -rate-limit 500 -cache-ttl 30m
 ```
 - Higher rate limits for busy sites
 - Long cache time for maximum performance
 
 ## What's Inside GoProxy?
 
-GoProxy is built with several components that work together:
-
-### 🔄 **Proxy Component**
+### 🔄 Proxy Component
 - Handles incoming web requests
 - Forwards them to your backend server
 - Captures responses for caching
 
-### 💾 **Cache Component**
+### 💾 Cache Component
 - Stores responses in memory
-- Automatically removes old data
-- Makes repeat requests super fast
+- Automatically removes expired entries
+- Makes repeat requests fast
 
-### 🚦 **Rate Limiter**
-- Tracks requests per user
-- Blocks users who make too many requests
+### 🚦 Rate Limiter
+- Tracks requests per IP
+- Blocks clients who exceed the limit
 - Protects your server from overload
 
-### 📈 **Metrics Component**
+### 📈 Metrics Component
 - Counts requests, cache hits, etc.
 - Provides performance statistics
 - Helps you understand usage patterns
@@ -257,10 +265,10 @@ GoProxy is built with several components that work together:
 ## Performance Tips
 
 ### For Best Performance
-1. **Use appropriate cache TTL**: Longer for static content, shorter for dynamic
-2. **Set reasonable rate limits**: High enough for normal use, low enough to prevent abuse
-3. **Monitor metrics**: Watch cache hit rates and response times
-4. **Scale horizontally**: Run multiple proxy instances for high traffic
+1. Use appropriate cache TTL: longer for static content, shorter for dynamic
+2. Set reasonable rate limits: high enough for normal use, low enough to prevent abuse
+3. Monitor metrics: watch cache hit rates and response times
+4. Scale horizontally: run multiple proxy instances for high traffic
 
 ### Memory Usage
 - Cache size depends on TTL and request volume
@@ -290,22 +298,11 @@ GoProxy is built with several components that work together:
 - [ ] Check metrics
 - [ ] Configure for your needs
 
-## Need More Help?
-
-If you're having trouble:
-1. Check the troubleshooting section above
-2. Look at the example configurations
-3. Test with the built-in test scripts
-4. Check the metrics for clues about what's happening
-
 ## Contributing
-
-Want to help improve GoProxy?
 1. Fork the repository
 2. Make your changes
 3. Test thoroughly
 4. Submit a pull request
 
 ## License
-
-This project is open source and available under the MIT License. 
+MIT

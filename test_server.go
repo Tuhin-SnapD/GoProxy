@@ -1,3 +1,6 @@
+//go:build testserver
+// +build testserver
+
 package main
 
 import (

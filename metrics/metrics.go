@@ -1,11 +1,12 @@
 package metrics
 
 import (
-	"fmt"
-	"net/http"
-	"sync"
-	"sync/atomic"
-	"time"
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "sync"
+    "sync/atomic"
+    "time"
 )
 
 type Collector struct {
@@ -15,11 +16,15 @@ type Collector struct {
 	blockedRequests  int64
 	responseTimes    []time.Duration
 	responseTimeMutex sync.RWMutex
+
+    recentRequests   []RequestLogEntry
+    requestsMutex    sync.RWMutex
 }
 
 func New() *Collector {
 	return &Collector{
 		responseTimes: make([]time.Duration, 0, 1000),
+        recentRequests: make([]RequestLogEntry, 0, 200),
 	}
 }
 
@@ -59,10 +64,10 @@ func (c *Collector) HandleMetrics(w http.ResponseWriter, r *http.Request) {
 	blockedRequests := atomic.LoadInt64(&c.blockedRequests)
 	
 	// Calculate cache hit rate
-	var cacheHitRate float64
-	if totalRequests > 0 {
-		cacheHitRate = float64(cacheHits) / float64(cacheHits+cacheMisses) * 100
-	}
+    var cacheHitRate float64
+    if cacheHits+cacheMisses > 0 {
+        cacheHitRate = float64(cacheHits) / float64(cacheHits+cacheMisses) * 100
+    }
 	
 	// Calculate average response time
 	c.responseTimeMutex.RLock()
@@ -132,10 +137,10 @@ func (c *Collector) HandleJSONMetrics(w http.ResponseWriter, r *http.Request) {
 	cacheMisses := atomic.LoadInt64(&c.cacheMisses)
 	blockedRequests := atomic.LoadInt64(&c.blockedRequests)
 	
-	var cacheHitRate float64
-	if totalRequests > 0 {
-		cacheHitRate = float64(cacheHits) / float64(cacheHits+cacheMisses) * 100
-	}
+    var cacheHitRate float64
+    if cacheHits+cacheMisses > 0 {
+        cacheHitRate = float64(cacheHits) / float64(cacheHits+cacheMisses) * 100
+    }
 	
 	c.responseTimeMutex.RLock()
 	var avgResponseTime time.Duration
@@ -167,6 +172,49 @@ func (c *Collector) HandleJSONMetrics(w http.ResponseWriter, r *http.Request) {
 	)
 	
 	w.Write([]byte(json))
+}
+
+// RequestLogEntry captures a single proxied request summary
+type RequestLogEntry struct {
+    Timestamp   time.Time `json:"timestamp"`
+    Method      string    `json:"method"`
+    Path        string    `json:"path"`
+    Status      int       `json:"status"`
+    ClientIP    string    `json:"client_ip"`
+    DurationMs  float64   `json:"duration_ms"`
+    CacheHit    bool      `json:"cache_hit"`
+    Bytes       int       `json:"bytes"`
+    Host        string    `json:"host"`
+    Scheme      string    `json:"scheme"`
+    UserAgent   string    `json:"user_agent"`
+    Referer     string    `json:"referer"`
+    ContentType string    `json:"content_type"`
+    CacheTTLRemainingMs float64 `json:"cache_ttl_remaining_ms"`
+}
+
+// AddRequestLog appends a request entry to a fixed-size ring buffer
+func (c *Collector) AddRequestLog(entry RequestLogEntry) {
+    c.requestsMutex.Lock()
+    defer c.requestsMutex.Unlock()
+    if len(c.recentRequests) >= 200 {
+        // drop oldest
+        c.recentRequests = c.recentRequests[1:]
+    }
+    c.recentRequests = append(c.recentRequests, entry)
+}
+
+// HandleRecentRequests returns recent request logs in JSON
+func (c *Collector) HandleRecentRequests(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    c.requestsMutex.RLock()
+    // copy to avoid holding lock during marshal
+    snapshot := make([]RequestLogEntry, len(c.recentRequests))
+    copy(snapshot, c.recentRequests)
+    c.requestsMutex.RUnlock()
+
+    enc := json.NewEncoder(w)
+    enc.SetIndent("", "  ")
+    _ = enc.Encode(snapshot)
 }
 
 var startTime = time.Now() 
